@@ -5,6 +5,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torchvision import datasets
 from torch.autograd import Variable
+import torchvision
 
 # Training settings
 parser = argparse.ArgumentParser(description='RecVis A3 training script')
@@ -14,7 +15,7 @@ parser.add_argument('--batch-size', type=int, default=64, metavar='B',
                     help='input batch size for training (default: 64)')
 parser.add_argument('--epochs', type=int, default=10, metavar='N',
                     help='number of epochs to train (default: 10)')
-parser.add_argument('--lr', type=float, default=0.1, metavar='LR',
+parser.add_argument('--lr', type=float, default=0.01, metavar='LR',
                     help='learning rate (default: 0.01)')
 parser.add_argument('--momentum', type=float, default=0.5, metavar='M',
                     help='SGD momentum (default: 0.5)')
@@ -35,26 +36,42 @@ if not os.path.isdir(args.experiment):
 # Data initialization and loading
 from data import data_transforms
 
-train_loader = torch.utils.data.DataLoader(
-    datasets.ImageFolder(args.data + '/train_images',
-                         transform=data_transforms),
-    batch_size=args.batch_size, shuffle=True, num_workers=1)
-val_loader = torch.utils.data.DataLoader(
-    datasets.ImageFolder(args.data + '/val_images',
-                         transform=data_transforms),
-    batch_size=args.batch_size, shuffle=False, num_workers=1)
+
+
+choix = "submit"
+if choix == "train": 
+    train_loader = torch.utils.data.DataLoader(
+        datasets.ImageFolder(args.data + '/train_images',
+                             transform=data_transforms),
+        batch_size=args.batch_size, shuffle=True, num_workers=1)
+    val_loader = torch.utils.data.DataLoader(
+        datasets.ImageFolder(args.data + '/val_images',
+                             transform=data_transforms),
+        batch_size=args.batch_size, shuffle=False, num_workers=1)
+elif choix == "submit":
+    train_loader = datasets.ImageFolder(args.data + '/train_images',
+                             transform=data_transforms)
+    val_loader = datasets.ImageFolder(args.data + '/val_images',
+                             transform=data_transforms)
+    train_loader = torch.utils.data.ConcatDataset([train_loader,val_loader])
+    train_loader = torch.utils.data.DataLoader(train_loader,
+        batch_size=args.batch_size, shuffle=True, num_workers=1)
+    val_loader = torch.utils.data.DataLoader(val_loader,
+        batch_size=args.batch_size, shuffle=False, num_workers=1)
+else:
+    assert False
 
 # Neural network and optimizer
 # We define neural net in model.py so that it can be reused by the evaluate.py script
-from model import Net
-model = Net()
+from model import createModel
+model = createModel()
 if use_cuda:
     print('Using GPU')
     model.cuda()
 else:
     print('Using CPU')
 
-optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
+optimizer = optim.Adam(model.parameters(),weight_decay=0)
 
 def train(epoch):
     model.train()
@@ -99,3 +116,4 @@ for epoch in range(1, args.epochs + 1):
     model_file = args.experiment + '/model_' + str(epoch) + '.pth'
     torch.save(model.state_dict(), model_file)
     print('\nSaved model to ' + model_file + '. You can run `python evaluate.py --model ' + model_file + '` to generate the Kaggle formatted csv file')
+
