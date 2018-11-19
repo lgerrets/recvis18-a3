@@ -41,7 +41,7 @@ from data import data_transforms
 choix = "submit"
 if choix == "train": 
     train_loader = torch.utils.data.DataLoader(
-        datasets.ImageFolder(args.data + '/train_images',
+        datasets.ImageFolder(args.data + '/train_aug',
                              transform=data_transforms),
         batch_size=args.batch_size, shuffle=True, num_workers=1)
     val_loader = torch.utils.data.DataLoader(
@@ -49,7 +49,7 @@ if choix == "train":
                              transform=data_transforms),
         batch_size=args.batch_size, shuffle=False, num_workers=1)
 elif choix == "submit":
-    train_loader = datasets.ImageFolder(args.data + '/train_images',
+    train_loader = datasets.ImageFolder(args.data + '/train_aug',
                              transform=data_transforms)
     val_loader = datasets.ImageFolder(args.data + '/val_images',
                              transform=data_transforms)
