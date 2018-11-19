@@ -34,25 +34,25 @@ if not os.path.isdir(args.experiment):
     os.makedirs(args.experiment)
 
 # Data initialization and loading
-from data import data_transforms
+from data import data_transforms, augmentation_transforms
 
 
 
-choix = "submit"
+choix = "train"
 if choix == "train": 
     train_loader = torch.utils.data.DataLoader(
-        datasets.ImageFolder(args.data + '/train_aug',
-                             transform=data_transforms),
+        datasets.ImageFolder(args.data + '/train_images',
+                             transform=augmentation_transforms),
         batch_size=args.batch_size, shuffle=True, num_workers=1)
     val_loader = torch.utils.data.DataLoader(
         datasets.ImageFolder(args.data + '/val_images',
                              transform=data_transforms),
         batch_size=args.batch_size, shuffle=False, num_workers=1)
 elif choix == "submit":
-    train_loader = datasets.ImageFolder(args.data + '/train_aug',
-                             transform=data_transforms)
+    train_loader = datasets.ImageFolder(args.data + '/train_images',
+                             transform=augmentation_transforms)
     val_loader = datasets.ImageFolder(args.data + '/val_images',
-                             transform=data_transforms)
+                             transform=augmentation_transforms)
     train_loader = torch.utils.data.ConcatDataset([train_loader,val_loader])
     train_loader = torch.utils.data.DataLoader(train_loader,
         batch_size=args.batch_size, shuffle=True, num_workers=1)
