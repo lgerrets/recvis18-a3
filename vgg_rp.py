@@ -14,10 +14,10 @@ class VGG_RP(nn.Module):
         super(VGG_RP, self).__init__()
         self.features = features
         self.classifier2 = nn.Sequential(
-            nn.Linear(512 * 7 * 7, num_classes),
-            # nn.ReLU(True),
-            # nn.Dropout(),
-            # nn.Linear(50, num_classes),
+            nn.Linear(512 * 7 * 7, 512),
+            nn.ReLU(True),
+            nn.Dropout(),
+            nn.Linear(512, num_classes),
         )
 
         # stop gradients ? which layers ?
@@ -266,6 +266,7 @@ def vgg16_bn_RP(pretrained=False, **kwargs):
     model = VGG_RP(make_layers(cfg['D'], batch_norm=True), **kwargs)
     if pretrained:
         model.load_state_dict(torchvision.models.vgg16_bn(pretrained=True).state_dict(),strict=False)
+    model.classifier = None
     return model
 
 

@@ -46,7 +46,7 @@ train_loader = torch.utils.data.DataLoader(
 val_loader = torch.utils.data.DataLoader(
     datasets.ImageFolder(args.data + '/val_images',
                          transform=data_transforms),
-    batch_size=args.batch_size, shuffle=False, num_workers=1)
+    batch_size=16, shuffle=False, num_workers=1)
 
 
 
@@ -73,13 +73,14 @@ def train(epoch):
         criterion = torch.nn.CrossEntropyLoss(reduction='elementwise_mean')
         loss_cls, loss_reg = model.compute_rp_loss(bbox,rp_cls,rp_reg)
         loss = criterion(output, target)
-        loss += loss_cls + loss_reg
+        loss += (loss_cls + loss_reg)/1000
         loss.backward()
         optimizer.step()
         if batch_idx % args.log_interval == 0:
             print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
                 epoch, batch_idx * len(data), len(train_loader.dataset),
                 100. * batch_idx / len(train_loader), loss.data.item()))
+        torch.cuda.empty_cache()
 
 def validation():
     model.eval()
@@ -100,6 +101,8 @@ def validation():
     print('\nValidation set: Average loss: {:.4f}, Accuracy: {}/{} ({:.0f}%)\n'.format(
         validation_loss, correct, len(val_loader.dataset),
         100. * correct / len(val_loader.dataset)))
+    torch.cuda.empty_cache()
+
 
 
 for epoch in range(1, args.epochs + 1):
