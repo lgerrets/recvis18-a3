@@ -34,37 +34,27 @@ if not os.path.isdir(args.experiment):
     os.makedirs(args.experiment)
 
 # Data initialization and loading
-from data import data_transforms, augmentation_transforms
+from data import data_transforms, augmentation_transforms, ImageBoxDataset
 
 
 
-choix = "train"
-if choix == "train": 
-    train_loader = torch.utils.data.DataLoader(
-        datasets.ImageFolder(args.data + '/train_images',
-                             transform=augmentation_transforms),
-        batch_size=args.batch_size, shuffle=True, num_workers=1)
-    val_loader = torch.utils.data.DataLoader(
-        datasets.ImageFolder(args.data + '/val_images',
-                             transform=data_transforms),
-        batch_size=args.batch_size, shuffle=False, num_workers=1)
-elif choix == "submit":
-    train_loader = datasets.ImageFolder(args.data + '/train_images',
-                             transform=augmentation_transforms)
-    val_loader = datasets.ImageFolder(args.data + '/val_images',
-                             transform=augmentation_transforms)
-    train_loader = torch.utils.data.ConcatDataset([train_loader,val_loader])
-    train_loader = torch.utils.data.DataLoader(train_loader,
-        batch_size=args.batch_size, shuffle=True, num_workers=1)
-    val_loader = torch.utils.data.DataLoader(val_loader,
-        batch_size=args.batch_size, shuffle=False, num_workers=1)
-else:
-    assert False
+train_loader = torch.utils.data.DataLoader(
+    ImageBoxDataset('experiment/bbox_dataset.csv',
+                    args.data + '/train_images',
+                    transform=augmentation_transforms),
+    batch_size=args.batch_size, shuffle=True, num_workers=1)
+val_loader = torch.utils.data.DataLoader(
+    datasets.ImageFolder(args.data + '/val_images',
+                         transform=data_transforms),
+    batch_size=args.batch_size, shuffle=False, num_workers=1)
+
+
 
 # Neural network and optimizer
 # We define neural net in model.py so that it can be reused by the evaluate.py script
-from model import createModel
-model = createModel()
+from vgg_rp import vgg16_bn_RP
+model = vgg16_bn_RP(pretrained=True)
+model.float()
 if use_cuda:
     print('Using GPU')
     model.cuda()
@@ -75,13 +65,15 @@ optimizer = optim.Adam(model.parameters(),weight_decay=0)
 
 def train(epoch):
     model.train()
-    for batch_idx, (data, target) in enumerate(train_loader):
+    for batch_idx, (data, target, bbox) in enumerate(train_loader):
         if use_cuda:
             data, target = data.cuda(), target.cuda()
         optimizer.zero_grad()
-        output = model(data)
+        output, rp_cls, rp_reg = model(data)
         criterion = torch.nn.CrossEntropyLoss(reduction='elementwise_mean')
+        loss_cls, loss_reg = model.compute_rp_loss(bbox,rp_cls,rp_reg)
         loss = criterion(output, target)
+        loss += loss_cls + loss_reg
         loss.backward()
         optimizer.step()
         if batch_idx % args.log_interval == 0:
@@ -96,7 +88,7 @@ def validation():
     for data, target in val_loader:
         if use_cuda:
             data, target = data.cuda(), target.cuda()
-        output = model(data)
+        output, _, _ = model(data)
         # sum up batch loss
         criterion = torch.nn.CrossEntropyLoss(reduction='elementwise_mean')
         validation_loss += criterion(output, target).data.item()

@@ -14,10 +14,10 @@ class VGG_RP(nn.Module):
         super(VGG_RP, self).__init__()
         self.features = features
         self.classifier2 = nn.Sequential(
-            nn.Linear(512 * 7 * 7, 1024),
-            nn.ReLU(True),
-            nn.Dropout(),
-            nn.Linear(1024, num_classes),
+            nn.Linear(512 * 7 * 7, num_classes),
+            # nn.ReLU(True),
+            # nn.Dropout(),
+            # nn.Linear(50, num_classes),
         )
 
         # stop gradients ? which layers ?
@@ -34,20 +34,22 @@ class VGG_RP(nn.Module):
             nn.ReLU(True)
             ])
         self.region_proposal_cls = nn.Sequential(*[
-            nn.Conv2d(512, N_ANCHORS, kernel_size=1, padding=0)
+            nn.Conv2d(512, N_ANCHORS, kernel_size=1, padding=0),
             nn.Sigmoid()
             ])
         self.region_proposal_reg = nn.Conv2d(512, 4*N_ANCHORS, kernel_size=1, padding=0)
 
         self._initialize_rp_weights()
+        self._create_anchors()
 
     def forward(self, x): # 224 x 224 x N_ANCHORS
+        x = x.float()
         x = self.features(x) # 7 x 7 x 512
 
         rp_512 = self.region_proposal_window(x) # 5 x 5 x 512
         rp_cls = self.region_proposal_cls(rp_512) # 5 x 5 x N_ANCHORS
         rp_reg = self.region_proposal_reg(rp_512) # 5 x 5 x 12
-        assert rp_reg.shape[1:] == [int(W_IMG/32),int(H_IMG/32),12]
+        rp_cls = rp_cls.view(x.size(0),5,5,3) # 5 x 5 x N_ANCHORS x 4 # tx,ty,tw,th
         rp_reg = rp_reg.view(x.size(0),5,5,3,4) # 5 x 5 x N_ANCHORS x 4 # tx,ty,tw,th
 
         self._compute_bboxes(rp_cls,rp_reg)
@@ -70,14 +72,25 @@ class VGG_RP(nn.Module):
                 nn.init.constant_(m.bias, 0)
 
     def _initialize_rp_weights(self):
-        for m in nn.Sequential(*[self.region_proposal_window,self.region_proposal_cls,self.region_proposal_reg]).modules():
-            nn.init.normal_(m.weight, 0, 0.01)
-            if m.bias is not None:
-                nn.init.constant_(m.bias, 0)
+        for m in self.region_proposal_window.children():
+            if isinstance(m, nn.Conv2d):
+                nn.init.normal_(m.weight, 0, 0.01)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+        for m in self.region_proposal_cls.children():
+            if isinstance(m, nn.Conv2d):
+                nn.init.normal_(m.weight, 0, 0.01)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+        for m in self.region_proposal_reg.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.normal_(m.weight, 0, 0.01)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
 
     def _create_anchors(self):
         scales = [56,112,224]
-        anchors = np.zeros((int(W_IMG/32),int(H_IMG/32),N_ANCHORS,8)) # 5 x 5 x N_ANCHORS x 8
+        anchors = np.zeros((int(W_IMG/32)-2,int(H_IMG/32)-2,N_ANCHORS,8)) # 5 x 5 x N_ANCHORS x 8
         for x in range(anchors.shape[0]):
             for y in range(anchors.shape[1]):
                 for anchor in range(anchors.shape[2]):
@@ -88,7 +101,7 @@ class VGG_RP(nn.Module):
                     x1,y1 = x+int(w/2), y+int(h/2)
                     # x1,y1 = min(x1,W_IMG-1), min(y1,H_IMG-1)
                     anchors[x,y,anchor,:] = [x0,y0,x1,y1,x,y,w,h] # 8 coord
-        self.anchors = torch.tensor(anchors)
+        self.anchors = torch.tensor(anchors,requires_grad=False).cuda().float()
 
     def _compute_bboxes(self,rp_cls,rp_reg):
         """
@@ -98,27 +111,30 @@ class VGG_RP(nn.Module):
         batch_size = rp_reg.size(0)
         anchors = self.anchors.repeat(batch_size,1,1,1,1)
 
-        bboxes = torch.stack([
+        self.bboxes = torch.stack([
             rp_reg[:,:,:,:,0]*anchors[:,:,:,:,6]+anchors[:,:,:,:,4],
             rp_reg[:,:,:,:,1]*anchors[:,:,:,:,7]+anchors[:,:,:,:,5],
             torch.exp(rp_reg[:,:,:,:,2])*anchors[:,:,:,:,6],
             torch.exp(rp_reg[:,:,:,:,3])*anchors[:,:,:,:,7]
             ],dim=4) # format cx,cy,w,h
-        bboxes = torch.stack([
-            bboxes[:,:,:,:,0]-bboxes[:,:,:,:,2]/2,
-            bboxes[:,:,:,:,1]-bboxes[:,:,:,:,3]/2,
-            bboxes[:,:,:,:,0]+bboxes[:,:,:,:,2]/2,
-            bboxes[:,:,:,:,1]+bboxes[:,:,:,:,3]/2,
-            ]) # format x0,y0,x1,y1
+        self.bboxes = torch.stack([
+            self.bboxes[:,:,:,:,0]-self.bboxes[:,:,:,:,2]/2,
+            self.bboxes[:,:,:,:,1]-self.bboxes[:,:,:,:,3]/2,
+            self.bboxes[:,:,:,:,0]+self.bboxes[:,:,:,:,2]/2,
+            self.bboxes[:,:,:,:,1]+self.bboxes[:,:,:,:,3]/2
+            ],dim=4).float().cuda() # format x0,y0,x1,y1
+
 
         sorted_bboxes = []
         for _ in range(batch_size):
             sorted_bboxes.append([])
-            for x in range(anchors.shape[0]):
-                for y in range(anchors.shape[1]):
-                    for anchor in range(anchors.shape[2]):
-                        sorted_bboxes[-1].append([x,y,anchor,rp_cls[x,y,anchor].item()])
-        sorted_bboxes[-1] = sorted_bboxes[-1][np.argsort(-sorted_bboxes[-1][:][3])] # classification by confidence of the bboxes (descending)
+            for x in range(anchors.shape[1]):
+                for y in range(anchors.shape[2]):
+                    for anchor in range(anchors.shape[3]):
+                        sorted_bboxes[-1].append([x,y,anchor,rp_cls[_,x,y,anchor].item()])
+            sorted_bboxes[-1] = np.array(sorted_bboxes[-1]) # TODO this is not clean .. we both need list and numpy structures 
+            sorted_bboxes[-1] = sorted_bboxes[-1][np.argsort(-sorted_bboxes[-1][:][3])] # classification by confidence of the bboxes (descending)
+            sorted_bboxes[-1] = sorted_bboxes[-1].tolist()
 
         # perform NMS
         for _ in range(batch_size):
@@ -126,25 +142,24 @@ class VGG_RP(nn.Module):
             while ind<len(sorted_bboxes[_])-1:
                 ind2 = ind+1
                 bbox_indexes = sorted_bboxes[_][ind][:3]
-                bbox = bboxes[_,bbox_indexes[0],bbox_indexes[1],bbox_indexes[2]]
+                bbox = self.bboxes[_,int(bbox_indexes[0]),int(bbox_indexes[1]),int(bbox_indexes[2])]
                 while ind2<len(sorted_bboxes[_]):
                     bbox_indexes2 = sorted_bboxes[_][ind2][:3]
-                    bbox2 = bboxes[_,bbox_indexes2[0],bbox_indexes2[1],bbox_indexes2[2]]
+                    bbox2 = self.bboxes[_,int(bbox_indexes2[0]),int(bbox_indexes2[1]),int(bbox_indexes2[2])]
                     if bb_intersection_over_union(bbox, bbox2) > 0.7:
                         sorted_bboxes[_].pop(ind2)
                     else:
                         ind2 += 1
                 ind += 1
         
-        self.bboxes = bboxes
         self.sorted_bboxes = sorted_bboxes
 
 
-    def compare_bboxes_to_real(self,bbox_real,rp_cls,rp_reg):
+    def compute_rp_loss(self,bbox_reals,rp_cls,rp_reg,lamb=3):
         """
-        Compute IOUs to get "pos" and "neg" anchors (which are returned fo loss computation at train time)
-        Perform NMS on pos and neg
+        Compute IOUs to get "pos" and "neg" anchors
         Sample 1:1 pos:neg (up to 256 each)
+        Compute reg and cls losses
         """
         
         anchors = self.anchors
@@ -154,21 +169,41 @@ class VGG_RP(nn.Module):
 
         neg_anchors = []
         pos_anchors = []
+        t_stars = []
 
         for _ in range(batch_size):
             neg_anchors.append([])
             pos_anchors.append([])
+            t_stars.append([])
             for bbox_info in sorted_bboxes[_]:
-                bbox = bboxes[_,bbox_info[0],bbox_info[1],bbox_info[2]]
-                iou = bb_intersection_over_union(bbox,bbox_real)
+                bbox = bboxes[_,int(bbox_info[0]),int(bbox_info[1]),int(bbox_info[2])]
+                iou = bb_intersection_over_union(bbox.cuda().float(),bbox_reals[_].cuda().float())
                 if iou > 0.7:
-                    pos_anchors[-1].append([bbox_info[0],bbox_info[1],bbox_info[2]])
+                    pos_anchors[-1].append([int(bbox_info[0]),int(bbox_info[1]),int(bbox_info[2])])
+                    t_stars[-1].append(torch.tensor([
+                        (bbox_reals[_][4].cuda().float()-anchors[int(bbox_info[0]),int(bbox_info[1]),int(bbox_info[2]),4])/anchors[int(bbox_info[0]),int(bbox_info[1]),int(bbox_info[2]),6],
+                        (bbox_reals[_][5].cuda().float()-anchors[int(bbox_info[0]),int(bbox_info[1]),int(bbox_info[2]),5])/anchors[int(bbox_info[0]),int(bbox_info[1]),int(bbox_info[2]),7],
+                        torch.log(bbox_reals[_][6].cuda().float()/anchors[int(bbox_info[0]),int(bbox_info[1]),int(bbox_info[2]),6]),
+                        torch.log(bbox_reals[_][7].cuda().float()/anchors[int(bbox_info[0]),int(bbox_info[1]),int(bbox_info[2]),7])
+                        ]).cuda().float())
                 elif iou < 0.3:
-                    neg_anchors[-1].append([bbox_info[0],bbox_info[1],bbox_info[2]])
+                    neg_anchors[-1].append([int(bbox_info[0]),int(bbox_info[1]),int(bbox_info[2])])
 
-        # nb_samples = min(len(neg_anchors),len(pos_anchors))
+        # nb_samples = min(len(neg_anchors),len(pos_anchors),256)
 
-        return neg_anchors, pos_anchors # batch_size x 5 x 5 x N_ANCHORS
+        loss_reg = torch.tensor(0).cuda().float()
+        loss_cls = torch.tensor(0).cuda().float()
+
+        for _ in range(batch_size):
+            for neg in neg_anchors[_]:
+                loss_cls += - torch.log(1-rp_cls[_,neg[0],neg[1],neg[2]])/len(neg_anchors[_]) # normalize by number of samples in this batch size
+            for pos, t_star in zip(pos_anchors[_], t_stars[_]):
+                loss_cls += - torch.log(rp_cls[_,pos[0],pos[1],pos[2]])
+                loss_reg += torch.nn.SmoothL1Loss()(rp_reg[_,pos[0],pos[1],pos[2],:], t_star) # also normalize by number of samples in this batch size
+
+        loss_reg *= lamb # already normalized by number of samples by torch.nn.SmootL1Loss
+
+        return loss_cls, loss_reg
 
 
 def bb_intersection_over_union(boxA, boxB):
@@ -189,7 +224,7 @@ def bb_intersection_over_union(boxA, boxB):
     # compute the intersection over union by taking the intersection
     # area and dividing it by the sum of prediction + ground-truth
     # areas - the interesection area
-    iou = interArea / float(boxAArea + boxBArea - interArea)
+    iou = interArea / boxAArea + boxBArea - interArea
  
     # return the intersection over union value
     return iou

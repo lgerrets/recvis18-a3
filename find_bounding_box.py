@@ -88,7 +88,7 @@ for ind_classe,classe in enumerate(classes):
             diffscore = scores[-1]-scores[-2]
             classe_score = output.data[ind_classe_real]
 
-            print(ind_window,scores[-1],scores[-2],pred,ind_classe_real)
+            # print(ind_window,scores[-1],scores[-2],pred,ind_classe_real)
 
             if ind_classe_real != pred:
                 predscores.append(-np.inf)
@@ -98,7 +98,7 @@ for ind_classe,classe in enumerate(classes):
         ind_best_window = np.argmax(predscores)
         window_ratio = windows_ratios[ind_best_window]
         x0,y0,x1,y1 = int(window_ratio[0]*w), int(window_ratio[1]*h), int(window_ratio[2]*w), int(window_ratio[3]*h)
-        output_file.write("%s,%d,%d,%d,%d,%.2f\n" % (f[:-4],x0,y0,x1,y1))
+        output_file.write("%s,%d,%d,%d,%d\n" % (f[:-4],x0,y0,x1,y1))
 
 print("Succesfully wrote " + args.outfile)
 
